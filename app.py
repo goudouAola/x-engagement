@@ -161,7 +161,7 @@ if st.session_state['auth_user'] is None:
         if st.button("申請する"):
             if reg_u and reg_p:
                 conn = sqlite3.connect(DB_NAME)
-                try: conn.execute("INSERT INTO users VALUES (?, ?, 0)", (reg_u, reg_p)); conn.commit(); st.success("申請完了")
+                try: conn.execute("INSERT INTO users VALUES (?, ?, 0)", (reg_u, reg_p)); conn.commit(); st.success("申請完了承認をお待ちください")
                 except: st.error("使用不可")
                 conn.close()
 else:
@@ -269,3 +269,4 @@ else:
                         conn.execute("DELETE FROM watch_urls WHERE url LIKE ? AND user_owner = ?", (f"%{tid}%", user))
                         conn.execute("DELETE FROM tweets WHERE tweet_id = ? AND user_owner = ?", (tid, user))
                     conn.commit(); conn.close(); st.rerun()
+
