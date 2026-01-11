@@ -159,8 +159,6 @@ else:
 
     if user == MASTER_KEY:
         st.title("👑 管理者メニュー")
-        
-        # ⚠️ 危険な操作（DB全削除）
         with st.expander("⚠️ 危険な操作"):
             if st.button("💣 データベースを完全に初期化する"):
                 if os.path.exists(DB_NAME):
@@ -169,8 +167,6 @@ else:
                     st.session_state['auth_user'] = None
                     time.sleep(2); st.rerun()
         st.write("---")
-
-        # ✨ 承認待ちリスト
         conn = sqlite3.connect(DB_NAME)
         unapproved = pd.read_sql_query("SELECT username FROM users WHERE is_approved=0", conn)
         if not unapproved.empty:
@@ -183,44 +179,28 @@ else:
                     conn.commit(); st.rerun()
         conn.close()
 
-        # ✨ ユーザー情報の更新・削除
         st.subheader("👥 ユーザー管理（編集・削除）")
         conn = sqlite3.connect(DB_NAME)
         all_users = pd.read_sql_query("SELECT * FROM users", conn)
         all_users["削除"] = False
         conn.close()
-
-        # data_editorで編集可能にする
-        edited_users = st.data_editor(
-            all_users, 
-            hide_index=True, 
-            column_config={"削除": st.column_config.CheckboxColumn("削除選択", default=False)},
-            use_container_width=True
-        )
-
+        edited_users = st.data_editor(all_users, hide_index=True, column_config={"削除": st.column_config.CheckboxColumn("削除選択", default=False)}, use_container_width=True)
         if st.button("💾 変更を保存 / ユーザーを削除"):
             conn = sqlite3.connect(DB_NAME)
             for _, r in edited_users.iterrows():
                 if r["削除"]:
-                    # ユーザー本体、監視URL、ツイートデータをすべて消去
                     conn.execute("DELETE FROM users WHERE username=?", (r["username"],))
                     conn.execute("DELETE FROM watch_urls WHERE user_owner=?", (r["username"],))
                     conn.execute("DELETE FROM tweets WHERE user_owner=?", (r["username"],))
                 else:
-                    # パスワードや承認フラグを更新
-                    conn.execute("UPDATE users SET password=?, is_approved=? WHERE username=?", 
-                                 (r["password"], int(r["is_approved"]), r["username"]))
-            conn.commit(); conn.close()
-            st.success("ユーザー情報を更新しました"); time.sleep(1); st.rerun()
-
+                    conn.execute("UPDATE users SET password=?, is_approved=? WHERE username=?", (r["password"], int(r["is_approved"]), r["username"]))
+            conn.commit(); conn.close(); st.success("更新しました"); time.sleep(1); st.rerun()
     else:
-        # 一般ユーザー画面（メトリクス、自動更新時間、HTMLズレなしリンク等）
         st.title(f"📊 監視中 ({user})")
         conn = sqlite3.connect(DB_NAME)
         last_upd_row = conn.execute("SELECT updated_at FROM tweets WHERE user_owner=? ORDER BY updated_at DESC LIMIT 1", (user,)).fetchone()
         current_count = conn.execute("SELECT COUNT(*) FROM watch_urls WHERE user_owner=?", (user,)).fetchone()[0]
         conn.close()
-        
         next_upd = "-"
         if last_upd_row:
             try:
@@ -228,7 +208,6 @@ else:
                 n_time = l_time + timedelta(minutes=30)
                 next_upd = n_time.strftime("%H:%M")
             except: pass
-
         c1, c2, c3 = st.columns(3)
         c1.metric("最終更新", last_upd_row[0].split(' ')[1] if last_upd_row else "-")
         c2.metric("次回更新予定", next_upd)
@@ -244,10 +223,7 @@ else:
                 p_bar = st.progress(0); p_status = st.empty(); scrape_all_with_multi_accounts(user, p_bar, p_status); st.rerun()
             st.write("---")
             if st.button("🗑️ 履歴全削除"):
-                conn = sqlite3.connect(DB_NAME)
-                conn.execute("DELETE FROM watch_urls WHERE user_owner=?", (user,))
-                conn.execute("DELETE FROM tweets WHERE user_owner=?", (user,))
-                conn.commit(); conn.close(); st.rerun()
+                conn = sqlite3.connect(DB_NAME); conn.execute("DELETE FROM watch_urls WHERE user_owner=?", (user,)); conn.execute("DELETE FROM tweets WHERE user_owner=?", (user,)); conn.commit(); conn.close(); st.rerun()
 
         conn = sqlite3.connect(DB_NAME)
         df = pd.read_sql_query("""
@@ -267,10 +243,12 @@ else:
                 links_html += '</div>'
                 st.markdown(links_html, unsafe_allow_html=True)
             with col_main:
+                # 💡 "content" カラムの見出しを "ツイート文" に変更
                 cols = ["選択", "No", "tweet_id", "content", "経過", "views", "likes", "bookmarks", "reposts", "replies"]
                 edit_df = st.data_editor(df[cols], column_config={
                         "選択": st.column_config.CheckboxColumn("", width="small"),
-                        "views": "インプ", "likes": "いいね", "bookmarks": "ブクマ", "reposts": "リポスト", "replies": "リプ"
+                        "content": "ツイート文",
+                        "views": "インプ", "likes": "いい", "bookmarks": "ブク", "reposts": "リポ", "replies": "リプ"
                     }, hide_index=True, width='stretch')
             if st.button("🗑️ 選択削除"):
                 sel = edit_df[edit_df["選択"]]
@@ -281,7 +259,3 @@ else:
                         conn.execute("DELETE FROM watch_urls WHERE url LIKE ? AND user_owner = ?", (f"%{tid}%", user))
                         conn.execute("DELETE FROM tweets WHERE tweet_id = ? AND user_owner = ?", (tid, user))
                     conn.commit(); conn.close(); st.rerun()
-
-
-
-
