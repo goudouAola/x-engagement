@@ -276,21 +276,34 @@ else:
         conn.close()
         
         if not df.empty:
-            df["No"] = range(1, len(df) + 1); df["経過"] = df["post_time"].apply(get_detailed_elapsed); df["選択"] = False
-            col_btn, col_main = st.columns([0.4, 4.6]) 
-            with col_btn:
-                links_html = '<div class="link-box">'
-                for _, row in df.iterrows():
-                    links_html += f'<a href="https://twitter.com/i/web/status/{row["tweet_id"]}" target="_blank" class="custom-link">🔗</a>'
-                links_html += '</div>'
-                st.markdown(links_html, unsafe_allow_html=True)
-            with col_main:
-                cols = ["選択", "No", "tweet_id", "content", "経過", "views", "likes", "bookmarks", "reposts", "replies"]
-                edit_df = st.data_editor(df[cols], column_config={
-                        "選択": st.column_config.CheckboxColumn("", width="small"),
-                        "content": "ツイート文",
-                        "views": "インプ", "likes": "いい", "bookmarks": "ブク", "reposts": "リポ", "replies": "リプ"
-                    }, hide_index=True, width='stretch')
+            df["経過"] = df["post_time"].apply(get_detailed_elapsed)
+            df["選択"] = False
+            
+            # ✨ 解決策：tweet_idからフルURLを生成（これ自体は隠す）
+            df["url"] = df["tweet_id"].apply(lambda x: f"https://twitter.com/i/web/status/{x}")
+            
+            # カラムの並び順（"url"を"🔗"という見出しで表の左側に配置）
+            cols = ["選択", "No", "url", "content", "経過", "views", "likes", "bookmarks", "reposts", "replies"]
+            
+            # 💡 スマホでもズレない＆反応する表の設定
+            edit_df = st.data_editor(
+                df[cols],
+                column_config={
+                    "選択": st.column_config.CheckboxColumn("", width="small"),
+                    "No": st.column_config.NumberColumn(width="small"),
+                    # ✨ ポイント1: LinkColumnを使う。スマホの「ダブルタップしないと飛ばない」を防ぐ
+                    # ✨ ポイント2: display_textを固定して、見た目を「🔗」ボタンにする
+                    "url": st.column_config.LinkColumn(
+                        "🔗", 
+                        display_text="🔗", # 表の中には「🔗」という文字だけが見える
+                        width="small"
+                    ),
+                    "content": "ツイート文",
+                    "views": "インプ", "likes": "いい", "bookmarks": "ブク", "reposts": "リポ", "replies": "リプ"
+                },
+                hide_index=True,
+                use_container_width=True
+            )
             if st.button("🗑️ 選択削除"):
                 sel = edit_df[edit_df["選択"]]
                 if not sel.empty:
@@ -300,3 +313,4 @@ else:
                         conn.execute("DELETE FROM watch_urls WHERE url LIKE ? AND user_owner = ?", (f"%{tid}%", user))
                         conn.execute("DELETE FROM tweets WHERE tweet_id = ? AND user_owner = ?", (tid, user))
                     conn.commit(); conn.close(); st.rerun()
+
