@@ -248,11 +248,11 @@ else:
                     
                     # 3行目：メトリクス
                     m1, m2, m3, m4, m5 = st.columns(5)
-                    m1.metric("👁️", row['views'])
-                    m2.metric("❤️", row['likes'])
-                    m3.metric("🔖", row['bookmarks'])
-                    m4.metric("🔁", row['reposts'])
-                    m5.metric("💬", row['replies'])
+                    m1.metric("インプレッション", row['views'])
+                    m2.metric("いいね", row['likes'])
+                    m3.metric("ブクマ", row['bookmarks'])
+                    m4.metric("リツイート", row['reposts'])
+                    m5.metric("リプライン", row['replies'])
                     
                     # 削除チェック
                     if st.checkbox("削除対象に選ぶ", key=f"cb_{row['tweet_id']}"):
@@ -265,3 +265,4 @@ else:
                         conn.execute("DELETE FROM watch_urls WHERE url LIKE ? AND user_owner = ?", (f"%{tid}%", user))
                         conn.execute("DELETE FROM tweets WHERE tweet_id = ? AND user_owner = ?", (tid, user))
                     conn.commit(); conn.close(); st.rerun()
+
