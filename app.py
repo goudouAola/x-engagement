@@ -28,16 +28,23 @@ def get_jst_now():
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
-    conn.execute("CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, is_approved INTEGER)")
+    conn.execute("CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, is_approved INTEGER, max_urls INTEGER DEFAULT 15)")
     conn.execute("""CREATE TABLE IF NOT EXISTS tweets 
                  (tweet_id TEXT, username TEXT, content TEXT, views TEXT, likes TEXT, 
                   bookmarks TEXT, reposts TEXT, replies TEXT, updated_at TEXT, 
                   post_time TEXT, user_owner TEXT, PRIMARY KEY(tweet_id, user_owner))""")
     conn.execute("CREATE TABLE IF NOT EXISTS watch_urls (url TEXT, user_owner TEXT, PRIMARY KEY(url, user_owner))")
+    
+    # 既存DBへのカラム追加対応
+    cursor = conn.execute("PRAGMA table_info(users)")
+    if "max_urls" not in [row[1] for row in cursor.fetchall()]:
+        conn.execute("ALTER TABLE users ADD COLUMN max_urls INTEGER DEFAULT 15")
+    
     cursor = conn.execute("PRAGMA table_info(tweets)")
     if "replies" not in [row[1] for row in cursor.fetchall()]:
         conn.execute("ALTER TABLE tweets ADD COLUMN replies TEXT DEFAULT '0'")
-    conn.execute("INSERT OR IGNORE INTO users VALUES (?, ?, 1)", (MASTER_KEY, MASTER_PW))
+    
+    conn.execute("INSERT OR IGNORE INTO users (username, password, is_approved, max_urls) VALUES (?, ?, 1, 999)", (MASTER_KEY, MASTER_PW))
     conn.commit(); conn.close()
 
 def get_detailed_elapsed(iso_str):
@@ -54,58 +61,67 @@ def get_detailed_elapsed(iso_str):
     except: return "-"
 
 def scrape_single_tweet(target_url, driver, owner):
+    tid = target_url.split('/')[-1].split('?')[0]
+    username = target_url.split('/')[3]
+    now = get_jst_now().strftime("%m/%d %H:%M")
     try:
         driver.get(target_url)
         time.sleep(WAIT_TIME_DETAILS)
-        parts = target_url.split('/')
-        username, tid = parts[3], parts[5].split('?')[0]
-        content = driver.find_element(By.XPATH, '//article[@data-testid="tweet"]//div[@data-testid="tweetText"]').text[:100]
-        post_time_str = driver.find_element(By.XPATH, '//article[@data-testid="tweet"]//time').get_attribute("datetime")
+        try:
+            content_el = driver.find_element(By.XPATH, '//article[@data-testid="tweet"]//div[@data-testid="tweetText"]')
+            content = content_el.text[:100]
+        except: content = "【取得失敗】(制限の可能性)"
+        try: post_time_str = driver.find_element(By.XPATH, '//article[@data-testid="tweet"]//time').get_attribute("datetime")
+        except: post_time_str = datetime.now(timezone.utc).isoformat()
         res = {"views": "0", "likes": "0", "bookmarks": "0", "reposts": "0", "replies": "0"}
-        article = driver.find_element(By.XPATH, '//article[@data-testid="tweet"]')
-        elements = article.find_elements(By.XPATH, ".//button | .//a | .//span")
-        for el in elements:
-            raw = el.get_attribute("aria-label") or el.text
-            if not raw: continue
-            m = re.search(r'([\d,.]+[KMB万億]?)', raw)
-            if not m: continue
-            v, low = m.group(1).replace(',', ''), raw.lower()
-            if "いいね" in low or "like" in low: res["likes"] = v
-            elif "リポスト" in low or "retweet" in low: res["reposts"] = v
-            elif "ブックマーク" in low or "bookmark" in low: res["bookmarks"] = v
-            elif "返信" in low or "reply" in low: res["replies"] = v
-            elif "表示" in low or "view" in low: res["views"] = v
-        now = get_jst_now().strftime("%m/%d %H:%M")
+        try:
+            article = driver.find_element(By.XPATH, '//article[@data-testid="tweet"]')
+            elements = article.find_elements(By.XPATH, ".//button | .//a | .//span")
+            for el in elements:
+                raw = el.get_attribute("aria-label") or el.text
+                if not raw: continue
+                m = re.search(r'([\d,.]+[KMB万億]?)', raw)
+                if not m: continue
+                v, low = m.group(1).replace(',', ''), raw.lower()
+                if "いいね" in low or "like" in low: res["likes"] = v
+                elif "リポスト" in low or "retweet" in low: res["reposts"] = v
+                elif "ブックマーク" in low or "bookmark" in low: res["bookmarks"] = v
+                elif "返信" in low or "reply" in low: res["replies"] = v
+                elif "表示" in low or "view" in low: res["views"] = v
+        except: pass
         conn = sqlite3.connect(DB_NAME)
         conn.execute("INSERT OR REPLACE INTO tweets VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                      (tid, username, content, res["views"], res["likes"], res["bookmarks"], res["reposts"], res["replies"], now, post_time_str, owner))
         conn.commit(); conn.close(); return True
-    except: return False
+    except Exception as e:
+        conn = sqlite3.connect(DB_NAME)
+        conn.execute("INSERT OR REPLACE INTO tweets VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     (tid, username, f"エラー: {str(e)}", "0", "0", "0", "0", "0", now, datetime.now(timezone.utc).isoformat(), owner))
+        conn.commit(); conn.close(); return False
 
 def scrape_all_with_multi_accounts(user_owner, progress_bar=None, status_text=None):
     conn = sqlite3.connect(DB_NAME)
     urls = pd.read_sql_query("SELECT url FROM watch_urls WHERE user_owner=?", conn, params=(user_owner,))['url'].tolist()
+    # ユーザーの上限を取得
+    max_urls = conn.execute("SELECT max_urls FROM users WHERE username=?", (user_owner,)).fetchone()[0]
     conn.close()
     if not urls: return
-    
     opts = Options()
     opts.add_argument("--headless")
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
-    # 💡 パス指定を削除（OSの標準パスを自動で見つけさせる）
-
+    opts.set_preference("intl.accept_languages", "ja-JP")
     try:
-        # 💡 Serviceの引数を空にすることで、OS内の geckodriver を自動検索させる
-        service = Service() 
+        service = Service()
         driver = webdriver.Firefox(service=service, options=opts)
-        
-        for i, url in enumerate(urls[:15]):
-            if status_text: status_text.text(f"更新中... ({i+1}/{len(urls[:15])})")
+        # 上限数に合わせてスクレイピング対象を絞り込む
+        for i, url in enumerate(urls[:max_urls]):
+            if status_text: status_text.text(f"更新中... ({i+1}/{len(urls[:max_urls])})")
             scrape_single_tweet(url, driver, user_owner)
-            if progress_bar: progress_bar.progress((i+1)/len(urls[:15]))
+            if progress_bar: progress_bar.progress((i+1)/len(urls[:max_urls]))
             time.sleep(5)
     except Exception as e:
-        if status_text: status_text.text(f"エラー詳細: {str(e)}")
+        if status_text: status_text.text(f"システムエラー: {str(e)}")
     finally:
         try: driver.quit()
         except: pass
@@ -159,7 +175,7 @@ if st.session_state['auth_user'] is None:
         if st.button("申請する"):
             if reg_u and reg_p:
                 conn = sqlite3.connect(DB_NAME)
-                try: conn.execute("INSERT INTO users VALUES (?, ?, 0)", (reg_u, reg_p)); conn.commit(); st.success("申請完了承認をお待ちください")
+                try: conn.execute("INSERT INTO users (username, password, is_approved, max_urls) VALUES (?, ?, 0, 15)", (reg_u, reg_p)); conn.commit(); st.success("申請完了")
                 except: st.error("使用不可")
                 conn.close()
 else:
@@ -170,11 +186,10 @@ else:
         st.title("👑 管理者メニュー")
         with st.expander("⚠️ 危険な操作"):
             if st.button("💣 データベースを完全に初期化する"):
-                if os.path.exists(DB_NAME):
-                    os.remove(DB_NAME)
-                    st.success("初期化完了。再読込してください。")
-                    st.session_state['auth_user'] = None
-                    time.sleep(2); st.rerun()
+                if os.path.exists(DB_NAME): os.remove(DB_NAME)
+                st.success("初期化完了。再読込してください。")
+                st.session_state['auth_user'] = None
+                time.sleep(2); st.rerun()
         st.write("---")
         conn = sqlite3.connect(DB_NAME)
         unapproved = pd.read_sql_query("SELECT username FROM users WHERE is_approved=0", conn)
@@ -193,7 +208,11 @@ else:
         all_users = pd.read_sql_query("SELECT * FROM users", conn)
         all_users["削除"] = False
         conn.close()
-        edited_users = st.data_editor(all_users, hide_index=True, column_config={"削除": st.column_config.CheckboxColumn("削除選択", default=False)}, use_container_width=True)
+        # 💡 max_urlsをエディタで編集可能に
+        edited_users = st.data_editor(all_users, hide_index=True, column_config={
+            "削除": st.column_config.CheckboxColumn("削除選択", default=False),
+            "max_urls": st.column_config.NumberColumn("登録上限数", min_value=1, max_value=100, step=1)
+        }, use_container_width=True)
         if st.button("💾 変更を保存 / ユーザーを削除"):
             conn = sqlite3.connect(DB_NAME)
             for _, r in edited_users.iterrows():
@@ -202,32 +221,37 @@ else:
                     conn.execute("DELETE FROM watch_urls WHERE user_owner=?", (r["username"],))
                     conn.execute("DELETE FROM tweets WHERE user_owner=?", (r["username"],))
                 else:
-                    conn.execute("UPDATE users SET password=?, is_approved=? WHERE username=?", (r["password"], int(r["is_approved"]), r["username"]))
+                    conn.execute("UPDATE users SET password=?, is_approved=?, max_urls=? WHERE username=?", (r["password"], int(r["is_approved"]), int(r["max_urls"]), r["username"]))
             conn.commit(); conn.close(); st.success("更新しました"); time.sleep(1); st.rerun()
     else:
         st.title(f"📊 監視中 ({user})")
         conn = sqlite3.connect(DB_NAME)
         last_upd_row = conn.execute("SELECT updated_at FROM tweets WHERE user_owner=? ORDER BY updated_at DESC LIMIT 1", (user,)).fetchone()
         current_count = conn.execute("SELECT COUNT(*) FROM watch_urls WHERE user_owner=?", (user,)).fetchone()[0]
+        # 💡 個別の上限を取得
+        max_urls = conn.execute("SELECT max_urls FROM users WHERE username=?", (user,)).fetchone()[0]
         conn.close()
+        
         next_upd = "-"
         if last_upd_row:
             try:
                 l_time = datetime.strptime(last_upd_row[0], "%m/%d %H:%M")
-                n_time = l_time + timedelta(minutes=30)
-                next_upd = n_time.strftime("%H:%M")
+                n_time = l_time + timedelta(minutes=30); next_upd = n_time.strftime("%H:%M")
             except: pass
         c1, c2, c3 = st.columns(3)
         c1.metric("最終更新", last_upd_row[0].split(' ')[1] if last_upd_row else "-")
         c2.metric("次回更新予定", next_upd)
-        c3.metric("登録件数", f"{current_count}/15")
+        c3.metric("登録件数", f"{current_count}/{max_urls}")
 
         with st.sidebar:
             new_url_side = st.text_input("URL追加")
             if st.button("追加", type="primary"):
                 if "status" in new_url_side:
-                    conn = sqlite3.connect(DB_NAME); conn.execute("INSERT OR IGNORE INTO watch_urls VALUES (?,?)", (new_url_side.split('?')[0], user)); conn.commit(); conn.close()
-                    p_bar = st.progress(0); p_status = st.empty(); scrape_all_with_multi_accounts(user, p_bar, p_status); st.rerun()
+                    if current_count < max_urls:
+                        conn = sqlite3.connect(DB_NAME); conn.execute("INSERT OR IGNORE INTO watch_urls VALUES (?,?)", (new_url_side.split('?')[0], user)); conn.commit(); conn.close()
+                        p_bar = st.progress(0); p_status = st.empty(); scrape_all_with_multi_accounts(user, p_bar, p_status); st.rerun()
+                    else:
+                        st.error(f"登録上限（{max_urls}件）に達しています。")
             if st.button("🚀 手動更新"):
                 p_bar = st.progress(0); p_status = st.empty(); scrape_all_with_multi_accounts(user, p_bar, p_status); st.rerun()
             st.write("---")
@@ -267,5 +291,3 @@ else:
                         conn.execute("DELETE FROM watch_urls WHERE url LIKE ? AND user_owner = ?", (f"%{tid}%", user))
                         conn.execute("DELETE FROM tweets WHERE tweet_id = ? AND user_owner = ?", (tid, user))
                     conn.commit(); conn.close(); st.rerun()
-
-
