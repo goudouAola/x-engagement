@@ -270,7 +270,7 @@ else:
                 cols = ["選択", "No", "tweet_id", "content", "経過", "views", "likes", "bookmarks", "reposts", "replies"]
                 edit_df = st.data_editor(df[cols], column_config={
                         "選択": st.column_config.CheckboxColumn("", width="small"),
-                        "views": "インプ", "likes": "いい", "bookmarks": "ブク", "reposts": "リポ", "replies": "リプ"
+                        "views": "インプ", "likes": "いいね", "bookmarks": "ブクマ", "reposts": "リポスト", "replies": "リプ"
                     }, hide_index=True, width='stretch')
             if st.button("🗑️ 選択削除"):
                 sel = edit_df[edit_df["選択"]]
@@ -281,3 +281,4 @@ else:
                         conn.execute("DELETE FROM watch_urls WHERE url LIKE ? AND user_owner = ?", (f"%{tid}%", user))
                         conn.execute("DELETE FROM tweets WHERE tweet_id = ? AND user_owner = ?", (tid, user))
                     conn.commit(); conn.close(); st.rerun()
+
