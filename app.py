@@ -115,8 +115,6 @@ def scrape_all_with_multi_accounts(user_owner, progress_bar=None, status_text=No
             scrape_single_tweet(url, driver, user_owner)
             if progress_bar: progress_bar.progress((i+1)/len(target_urls))
             time.sleep(5)
-    except Exception as e:
-        if status_text: status_text.text(f"エラー: {str(e)}")
     finally:
         try: driver.quit()
         except: pass
@@ -166,9 +164,9 @@ else:
     if st.sidebar.button("ログアウト"): st.session_state['auth_user'] = None; st.rerun()
 
     if user == MASTER_KEY:
-        st.title("👑 管理者")
-        with st.expander("⚠️ DB初期化"):
-            if st.button("💣 削除実行"):
+        st.title("👑 管理者メニュー")
+        with st.expander("⚠️ DB操作"):
+            if st.button("💣 データベース完全初期化"):
                 if os.path.exists(DB_NAME): os.remove(DB_NAME)
                 st.session_state['auth_user'] = None; st.rerun()
         conn = sqlite3.connect(DB_NAME); unapproved = pd.read_sql_query("SELECT username FROM users WHERE is_approved=0", conn); conn.close()
@@ -179,7 +177,7 @@ else:
         st.subheader("ユーザー管理")
         conn = sqlite3.connect(DB_NAME); all_users = pd.read_sql_query("SELECT * FROM users", conn); all_users["削除"] = False; conn.close()
         edited = st.data_editor(all_users, hide_index=True, column_config={"削除": st.column_config.CheckboxColumn("削除")})
-        if st.button("💾 保存"):
+        if st.button("💾 ユーザー情報保存"):
             conn = sqlite3.connect(DB_NAME)
             for _, r in edited.iterrows():
                 if r["削除"]: conn.execute("DELETE FROM users WHERE username=?", (r["username"],))
@@ -206,7 +204,7 @@ else:
         c3.metric("状況", f"{current_count}/{max_urls_user}")
 
         with st.sidebar:
-            st.header("🔗 一括追加")
+            st.header("🔗 一括URL追加")
             multi_urls = st.text_area("改行区切りで入力", height=150)
             if st.button("一括追加", type="primary"):
                 url_list = [u.strip().split('?')[0] for u in multi_urls.split('\n') if "status" in u]
@@ -221,6 +219,7 @@ else:
             if st.button("🗑️ 履歴全削除"):
                 conn = sqlite3.connect(DB_NAME); conn.execute("DELETE FROM watch_urls WHERE user_owner=?", (user,)); conn.execute("DELETE FROM tweets WHERE user_owner=?", (user,)); conn.commit(); conn.close(); st.rerun()
 
+        # 🚀 カードリスト形式表示
         conn = sqlite3.connect(DB_NAME)
         df = pd.read_sql_query("""
             SELECT t.* FROM tweets t 
@@ -231,28 +230,38 @@ else:
         
         if not df.empty:
             df["経過"] = df["post_time"].apply(get_detailed_elapsed)
-            df["選択"] = False
-            # 💡 カラム名をurlに変更し、ツイートURLを生成
-            df["url"] = df["tweet_id"].apply(lambda x: f"https://twitter.com/i/web/status/{x}")
             
-            # 💡 キーエラー回避：表示するカラムを厳選
-            cols = ["選択", "url", "content", "経過", "views", "likes", "bookmarks", "reposts", "replies"]
-            
-            edit_df = st.data_editor(df[cols], column_config={
-                        "選択": st.column_config.CheckboxColumn("", width="small"),
-                        "url": st.column_config.LinkColumn("🔗", display_text="🔗", width="small"),
-                        "content": "ツイート文",
-                        "views": "インプ", "likes": "いい", "bookmarks": "ブク", "reposts": "リポ", "replies": "リプ"
-                    }, hide_index=True, use_container_width=True)
+            st.write("---")
+            delete_list = []
+            for i, row in df.iterrows():
+                # カードコンテナ
+                with st.container(border=True):
+                    # 1行目：リンクボタンと基本情報
+                    col_btn, col_info = st.columns([1, 3])
+                    with col_btn:
+                        st.link_button("🔗 リンクを開く", f"https://twitter.com/i/web/status/{row['tweet_id']}", use_container_width=True)
+                    with col_info:
+                        st.markdown(f"**{row['username']}** | {row['updated_at']} ({row['経過']})")
+                    
+                    # 2行目：ツイート本文
+                    st.caption(row['content'])
+                    
+                    # 3行目：メトリクス
+                    m1, m2, m3, m4, m5 = st.columns(5)
+                    m1.metric("👁️", row['views'])
+                    m2.metric("❤️", row['likes'])
+                    m3.metric("🔖", row['bookmarks'])
+                    m4.metric("🔁", row['reposts'])
+                    m5.metric("💬", row['replies'])
+                    
+                    # 削除チェック
+                    if st.checkbox("削除対象に選ぶ", key=f"cb_{row['tweet_id']}"):
+                        delete_list.append(row['tweet_id'])
 
-            if st.button("🗑️ 選択削除"):
-                sel = edit_df[edit_df["選択"]]
-                if not sel.empty:
+            if delete_list:
+                if st.button(f"🗑️ 選択した {len(delete_list)} 件を削除"):
                     conn = sqlite3.connect(DB_NAME)
-                    for _, r in sel.iterrows():
-                        # df[cols]を使ったため、元のデータセットから紐付け
-                        target_tid = df.loc[_.name, "tweet_id"] if hasattr(_, 'name') else None
-                        if target_tid:
-                            conn.execute("DELETE FROM watch_urls WHERE url LIKE ? AND user_owner = ?", (f"%{target_tid}%", user))
-                            conn.execute("DELETE FROM tweets WHERE tweet_id = ? AND user_owner = ?", (target_tid, user))
+                    for tid in delete_list:
+                        conn.execute("DELETE FROM watch_urls WHERE url LIKE ? AND user_owner = ?", (f"%{tid}%", user))
+                        conn.execute("DELETE FROM tweets WHERE tweet_id = ? AND user_owner = ?", (tid, user))
                     conn.commit(); conn.close(); st.rerun()
