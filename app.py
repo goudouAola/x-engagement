@@ -92,13 +92,11 @@ def scrape_all_with_multi_accounts(user_owner, progress_bar=None, status_text=No
     opts.add_argument("--headless")
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
-    # 💡 サーバー上のFirefoxパスを明示的に指定
-    opts.binary_location = "/usr/bin/firefox"
+    # 💡 パス指定を削除（OSの標準パスを自動で見つけさせる）
 
     try:
-        # 💡 WebDriverManagerを使いつつ、より安全な初期化方法に
-        driver_path = GeckoDriverManager().install()
-        service = Service(executable_path=driver_path)
+        # 💡 Serviceの引数を空にすることで、OS内の geckodriver を自動検索させる
+        service = Service() 
         driver = webdriver.Firefox(service=service, options=opts)
         
         for i, url in enumerate(urls[:15]):
@@ -107,7 +105,7 @@ def scrape_all_with_multi_accounts(user_owner, progress_bar=None, status_text=No
             if progress_bar: progress_bar.progress((i+1)/len(urls[:15]))
             time.sleep(5)
     except Exception as e:
-        if status_text: status_text.text(f"エラー発生: {str(e)}")
+        if status_text: status_text.text(f"エラー詳細: {str(e)}")
     finally:
         try: driver.quit()
         except: pass
@@ -269,4 +267,5 @@ else:
                         conn.execute("DELETE FROM watch_urls WHERE url LIKE ? AND user_owner = ?", (f"%{tid}%", user))
                         conn.execute("DELETE FROM tweets WHERE tweet_id = ? AND user_owner = ?", (tid, user))
                     conn.commit(); conn.close(); st.rerun()
+
 
