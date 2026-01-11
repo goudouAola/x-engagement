@@ -35,7 +35,6 @@ def init_db():
                   post_time TEXT, user_owner TEXT, PRIMARY KEY(tweet_id, user_owner))""")
     conn.execute("CREATE TABLE IF NOT EXISTS watch_urls (url TEXT, user_owner TEXT, PRIMARY KEY(url, user_owner))")
     
-    # 既存DBへのカラム追加対応
     cursor = conn.execute("PRAGMA table_info(users)")
     if "max_urls" not in [row[1] for row in cursor.fetchall()]:
         conn.execute("ALTER TABLE users ADD COLUMN max_urls INTEGER DEFAULT 15")
@@ -102,8 +101,7 @@ def scrape_single_tweet(target_url, driver, owner):
 def scrape_all_with_multi_accounts(user_owner, progress_bar=None, status_text=None):
     conn = sqlite3.connect(DB_NAME)
     urls = pd.read_sql_query("SELECT url FROM watch_urls WHERE user_owner=?", conn, params=(user_owner,))['url'].tolist()
-    # ユーザーの上限を取得
-    max_urls = conn.execute("SELECT max_urls FROM users WHERE username=?", (user_owner,)).fetchone()[0]
+    max_urls_val = conn.execute("SELECT max_urls FROM users WHERE username=?", (user_owner,)).fetchone()[0]
     conn.close()
     if not urls: return
     opts = Options()
@@ -114,11 +112,11 @@ def scrape_all_with_multi_accounts(user_owner, progress_bar=None, status_text=No
     try:
         service = Service()
         driver = webdriver.Firefox(service=service, options=opts)
-        # 上限数に合わせてスクレイピング対象を絞り込む
-        for i, url in enumerate(urls[:max_urls]):
-            if status_text: status_text.text(f"更新中... ({i+1}/{len(urls[:max_urls])})")
+        target_urls = urls[:max_urls_val]
+        for i, url in enumerate(target_urls):
+            if status_text: status_text.text(f"更新中... ({i+1}/{len(target_urls)})")
             scrape_single_tweet(url, driver, user_owner)
-            if progress_bar: progress_bar.progress((i+1)/len(urls[:max_urls]))
+            if progress_bar: progress_bar.progress((i+1)/len(target_urls))
             time.sleep(5)
     except Exception as e:
         if status_text: status_text.text(f"システムエラー: {str(e)}")
@@ -202,18 +200,13 @@ else:
                     conn.execute("UPDATE users SET is_approved=1 WHERE username=?", (target,))
                     conn.commit(); st.rerun()
         conn.close()
-
-        st.subheader("👥 ユーザー管理（編集・削除）")
-        conn = sqlite3.connect(DB_NAME)
-        all_users = pd.read_sql_query("SELECT * FROM users", conn)
-        all_users["削除"] = False
-        conn.close()
-        # 💡 max_urlsをエディタで編集可能に
+        st.subheader("👥 ユーザー管理")
+        conn = sqlite3.connect(DB_NAME); all_users = pd.read_sql_query("SELECT * FROM users", conn); all_users["削除"] = False; conn.close()
         edited_users = st.data_editor(all_users, hide_index=True, column_config={
             "削除": st.column_config.CheckboxColumn("削除選択", default=False),
-            "max_urls": st.column_config.NumberColumn("登録上限数", min_value=1, max_value=100, step=1)
+            "max_urls": st.column_config.NumberColumn("上限数", min_value=1, max_value=500, step=1)
         }, use_container_width=True)
-        if st.button("💾 変更を保存 / ユーザーを削除"):
+        if st.button("💾 変更保存 / 削除実行"):
             conn = sqlite3.connect(DB_NAME)
             for _, r in edited_users.iterrows():
                 if r["削除"]:
@@ -222,36 +215,46 @@ else:
                     conn.execute("DELETE FROM tweets WHERE user_owner=?", (r["username"],))
                 else:
                     conn.execute("UPDATE users SET password=?, is_approved=?, max_urls=? WHERE username=?", (r["password"], int(r["is_approved"]), int(r["max_urls"]), r["username"]))
-            conn.commit(); conn.close(); st.success("更新しました"); time.sleep(1); st.rerun()
+            conn.commit(); conn.close(); st.success("保存完了"); st.rerun()
     else:
         st.title(f"📊 監視中 ({user})")
         conn = sqlite3.connect(DB_NAME)
         last_upd_row = conn.execute("SELECT updated_at FROM tweets WHERE user_owner=? ORDER BY updated_at DESC LIMIT 1", (user,)).fetchone()
         current_count = conn.execute("SELECT COUNT(*) FROM watch_urls WHERE user_owner=?", (user,)).fetchone()[0]
-        # 💡 個別の上限を取得
-        max_urls = conn.execute("SELECT max_urls FROM users WHERE username=?", (user,)).fetchone()[0]
+        max_urls_user = conn.execute("SELECT max_urls FROM users WHERE username=?", (user,)).fetchone()[0]
         conn.close()
         
-        next_upd = "-"
-        if last_upd_row:
-            try:
-                l_time = datetime.strptime(last_upd_row[0], "%m/%d %H:%M")
-                n_time = l_time + timedelta(minutes=30); next_upd = n_time.strftime("%H:%M")
-            except: pass
         c1, c2, c3 = st.columns(3)
         c1.metric("最終更新", last_upd_row[0].split(' ')[1] if last_upd_row else "-")
-        c2.metric("次回更新予定", next_upd)
-        c3.metric("登録件数", f"{current_count}/{max_urls}")
+        c2.metric("登録状況", f"{current_count}/{max_urls_user}")
+        c3.metric("残り枠", max_urls_user - current_count)
 
         with st.sidebar:
-            new_url_side = st.text_input("URL追加")
-            if st.button("追加", type="primary"):
-                if "status" in new_url_side:
-                    if current_count < max_urls:
-                        conn = sqlite3.connect(DB_NAME); conn.execute("INSERT OR IGNORE INTO watch_urls VALUES (?,?)", (new_url_side.split('?')[0], user)); conn.commit(); conn.close()
-                        p_bar = st.progress(0); p_status = st.empty(); scrape_all_with_multi_accounts(user, p_bar, p_status); st.rerun()
-                    else:
-                        st.error(f"登録上限（{max_urls}件）に達しています。")
+            st.header("🔗 一括URL追加")
+            # 💡 text_areaに変更して複数入力可能に
+            multi_urls = st.text_area("URLを改行して入力", placeholder="https://x.com/...\nhttps://x.com/...", height=150)
+            if st.button("一括追加", type="primary"):
+                # 改行や空白を除去してリスト化
+                url_list = [u.strip().split('?')[0] for u in multi_urls.split('\n') if "status" in u]
+                if url_list:
+                    conn = sqlite3.connect(DB_NAME)
+                    added_count = 0
+                    for clean_url in url_list:
+                        # ループ内でも件数チェック
+                        temp_count = conn.execute("SELECT COUNT(*) FROM watch_urls WHERE user_owner=?", (user,)).fetchone()[0]
+                        if temp_count < max_urls_user:
+                            conn.execute("INSERT OR IGNORE INTO watch_urls VALUES (?,?)", (clean_url, user))
+                            added_count += 1
+                        else:
+                            st.warning(f"一部登録不可：上限（{max_urls_user}件）を超えました")
+                            break
+                    conn.commit(); conn.close()
+                    if added_count > 0:
+                        p_bar = st.progress(0); p_status = st.empty()
+                        scrape_all_with_multi_accounts(user, p_bar, p_status); st.rerun()
+                else:
+                    st.error("有効なURLが見つかりません")
+            
             if st.button("🚀 手動更新"):
                 p_bar = st.progress(0); p_status = st.empty(); scrape_all_with_multi_accounts(user, p_bar, p_status); st.rerun()
             st.write("---")
@@ -279,8 +282,8 @@ else:
                 cols = ["選択", "No", "tweet_id", "content", "経過", "views", "likes", "bookmarks", "reposts", "replies"]
                 edit_df = st.data_editor(df[cols], column_config={
                         "選択": st.column_config.CheckboxColumn("", width="small"),
-                        "content": "ツイート内容",
-                        "views": "インプ", "likes": "いいね", "bookmarks": "ブクマ", "reposts": "リポスト", "replies": "リプ"
+                        "content": "ツイート文",
+                        "views": "インプ", "likes": "いい", "bookmarks": "ブク", "reposts": "リポ", "replies": "リプ"
                     }, hide_index=True, width='stretch')
             if st.button("🗑️ 選択削除"):
                 sel = edit_df[edit_df["選択"]]
@@ -291,4 +294,3 @@ else:
                         conn.execute("DELETE FROM watch_urls WHERE url LIKE ? AND user_owner = ?", (f"%{tid}%", user))
                         conn.execute("DELETE FROM tweets WHERE tweet_id = ? AND user_owner = ?", (tid, user))
                     conn.commit(); conn.close(); st.rerun()
-
