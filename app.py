@@ -60,7 +60,7 @@ def scrape_single_tweet(target_url, driver, owner):
     try:
         tid = target_url.split('/')[-1].split('?')[0]
         username = target_url.split('/')[3]
-        now = get_jst_now().strftime("%m/%d %H:%M")
+        now = get_jst_now().strftime("%Y/%m/%d %H:%M") # 年を追加して警告回避
         driver.get(target_url)
         time.sleep(WAIT_TIME_DETAILS)
         try:
@@ -193,7 +193,8 @@ else:
         all_users = pd.read_sql_query("SELECT * FROM users", conn)
         all_users["削除"] = False
         conn.close()
-        edited = st.data_editor(all_users, hide_index=True, column_config={"削除": st.column_config.CheckboxColumn("削除")})
+        # 最新の引数 width='stretch' を使用
+        edited = st.data_editor(all_users, hide_index=True, width='stretch', column_config={"削除": st.column_config.CheckboxColumn("削除")})
         if st.button("💾 ユーザー情報保存"):
             conn = sqlite3.connect(DB_NAME)
             for _, r in edited.iterrows():
@@ -213,7 +214,8 @@ else:
         next_upd = "-"
         if last_upd_row:
             try:
-                l_time = datetime.strptime(last_upd_row[0], "%m/%d %H:%M")
+                # ログの警告対策として現在年を補完
+                l_time = datetime.strptime(f"{datetime.now().year}/{last_upd_row[0]}", "%Y/%m/%d %H:%M")
                 next_upd = (l_time + timedelta(minutes=30)).strftime("%H:%M")
             except: pass
 
@@ -255,13 +257,16 @@ else:
         if not df.empty:
             df["経過"] = df["post_time"].apply(get_detailed_elapsed)
             st.write("---")
+            
+            # del_listをセッション状態に保持
             if 'del_list' not in st.session_state: st.session_state.del_list = []
             
             for i, row in df.iterrows():
+                # カード形式表示
                 with st.container(border=True):
                     col_btn, col_info = st.columns([1, 2])
                     with col_btn:
-                        st.link_button("🔗 リンクを開く", f"https://twitter.com/i/web/status/{row['tweet_id']}", use_container_width=True)
+                        st.link_button("🔗 リンクを開く", f"https://twitter.com/i/web/status/{row['tweet_id']}", width='stretch')
                     with col_info:
                         st.markdown(f"**{row['username']}** | {row['updated_at']}")
                     st.caption(row['content'])
@@ -271,7 +276,9 @@ else:
                     m3.metric("🔖", row['bookmarks'])
                     m4.metric("🔁", row['reposts'])
                     m5.metric("💬", row['replies'])
-                    if st.checkbox("削除対象", key=f"chk_{row['tweet_id']}"):
+                    
+                    # 個別削除チェック
+                    if st.checkbox("削除選択", key=f"chk_{row['tweet_id']}"):
                         if row['tweet_id'] not in st.session_state.del_list:
                             st.session_state.del_list.append(row['tweet_id'])
                     elif row['tweet_id'] in st.session_state.del_list:
