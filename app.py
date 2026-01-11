@@ -144,7 +144,7 @@ if st.session_state['auth_user'] is None:
             if res and p == res[0]:
                 if int(res[1]) == 1: st.session_state['auth_user'] = u; st.rerun()
                 else: st.error("管理者の承認待ちです")
-            else: st.error("不いち")
+            else: st.error("不一致")
     with t2:
         reg_u = st.text_input("希望ID"); reg_p = st.text_input("希望PASS", type="password")
         if st.button("申請する"):
@@ -160,31 +160,61 @@ else:
     if user == MASTER_KEY:
         st.title("👑 管理者メニュー")
         
-        # --- ✨ DB初期化機能（マスター専用） ---
+        # ⚠️ 危険な操作（DB全削除）
         with st.expander("⚠️ 危険な操作"):
-            st.warning("以下のボタンを押すと、全ユーザー、全ツイート、全設定が完全に消去されます。")
             if st.button("💣 データベースを完全に初期化する"):
                 if os.path.exists(DB_NAME):
                     os.remove(DB_NAME)
-                    st.success("DBファイルを削除しました。ページをリロードして再ログインしてください。")
+                    st.success("初期化完了。再読込してください。")
                     st.session_state['auth_user'] = None
-                    time.sleep(2)
-                    st.rerun()
-        
+                    time.sleep(2); st.rerun()
         st.write("---")
-        conn = sqlite3.connect(DB_NAME); unapproved = pd.read_sql_query("SELECT username FROM users WHERE is_approved=0", conn); conn.close()
+
+        # ✨ 承認待ちリスト
+        conn = sqlite3.connect(DB_NAME)
+        unapproved = pd.read_sql_query("SELECT username FROM users WHERE is_approved=0", conn)
         if not unapproved.empty:
+            st.subheader("📝 承認待ちユーザー")
             for target in unapproved["username"]:
                 c1, c2 = st.columns([3, 1])
-                c1.write(f"申請中: {target}")
-                if c2.button("承認", key=target):
-                    conn = sqlite3.connect(DB_NAME); conn.execute("UPDATE users SET is_approved=1 WHERE username=?", (target,)); conn.commit(); conn.close(); st.rerun()
-        
-        st.subheader("ユーザー管理")
-        conn = sqlite3.connect(DB_NAME); all_users = pd.read_sql_query("SELECT * FROM users", conn); conn.close(); st.data_editor(all_users, hide_index=True)
+                c1.write(f"申請中: **{target}**")
+                if c2.button("承認", key=f"app_{target}"):
+                    conn.execute("UPDATE users SET is_approved=1 WHERE username=?", (target,))
+                    conn.commit(); st.rerun()
+        conn.close()
+
+        # ✨ ユーザー情報の更新・削除
+        st.subheader("👥 ユーザー管理（編集・削除）")
+        conn = sqlite3.connect(DB_NAME)
+        all_users = pd.read_sql_query("SELECT * FROM users", conn)
+        all_users["削除"] = False
+        conn.close()
+
+        # data_editorで編集可能にする
+        edited_users = st.data_editor(
+            all_users, 
+            hide_index=True, 
+            column_config={"削除": st.column_config.CheckboxColumn("削除選択", default=False)},
+            use_container_width=True
+        )
+
+        if st.button("💾 変更を保存 / ユーザーを削除"):
+            conn = sqlite3.connect(DB_NAME)
+            for _, r in edited_users.iterrows():
+                if r["削除"]:
+                    # ユーザー本体、監視URL、ツイートデータをすべて消去
+                    conn.execute("DELETE FROM users WHERE username=?", (r["username"],))
+                    conn.execute("DELETE FROM watch_urls WHERE user_owner=?", (r["username"],))
+                    conn.execute("DELETE FROM tweets WHERE user_owner=?", (r["username"],))
+                else:
+                    # パスワードや承認フラグを更新
+                    conn.execute("UPDATE users SET password=?, is_approved=? WHERE username=?", 
+                                 (r["password"], int(r["is_approved"]), r["username"]))
+            conn.commit(); conn.close()
+            st.success("ユーザー情報を更新しました"); time.sleep(1); st.rerun()
 
     else:
-        # 一般ユーザー画面
+        # 一般ユーザー画面（メトリクス、自動更新時間、HTMLズレなしリンク等）
         st.title(f"📊 監視中 ({user})")
         conn = sqlite3.connect(DB_NAME)
         last_upd_row = conn.execute("SELECT updated_at FROM tweets WHERE user_owner=? ORDER BY updated_at DESC LIMIT 1", (user,)).fetchone()
