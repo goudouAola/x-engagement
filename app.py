@@ -8,7 +8,7 @@ from datetime import datetime, timezone, timedelta
 from selenium import webdriver
 from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.firefox.service import Service
-# from webdriver_manager.firefox import GeckoDriverManager  # 👈 不要なのでコメントアウト
+from webdriver_manager.firefox import GeckoDriverManager
 from selenium.webdriver.common.by import By
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -87,19 +87,27 @@ def scrape_all_with_multi_accounts(user_owner, progress_bar=None, status_text=No
     urls = pd.read_sql_query("SELECT url FROM watch_urls WHERE user_owner=?", conn, params=(user_owner,))['url'].tolist()
     conn.close()
     if not urls: return
+    
     opts = Options()
     opts.add_argument("--headless")
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
+    # 💡 サーバー上のFirefoxパスを明示的に指定
+    opts.binary_location = "/usr/bin/firefox"
+
     try:
-        # 💡 ここを修正：サーバー内にある既存のバイナリを直接使用する
-        service = Service(executable_path="/usr/bin/geckodriver")
+        # 💡 WebDriverManagerを使いつつ、より安全な初期化方法に
+        driver_path = GeckoDriverManager().install()
+        service = Service(executable_path=driver_path)
         driver = webdriver.Firefox(service=service, options=opts)
+        
         for i, url in enumerate(urls[:15]):
             if status_text: status_text.text(f"更新中... ({i+1}/{len(urls[:15])})")
             scrape_single_tweet(url, driver, user_owner)
             if progress_bar: progress_bar.progress((i+1)/len(urls[:15]))
             time.sleep(5)
+    except Exception as e:
+        if status_text: status_text.text(f"エラー発生: {str(e)}")
     finally:
         try: driver.quit()
         except: pass
