@@ -224,23 +224,29 @@ else:
         max_urls_user = conn.execute("SELECT max_urls FROM users WHERE username=?", (user,)).fetchone()[0]
         conn.close()
         
+        # 💡 次回更新予定の計算を復活
+        next_upd = "-"
+        if last_upd_row:
+            try:
+                l_time = datetime.strptime(last_upd_row[0], "%m/%d %H:%M")
+                n_time = l_time + timedelta(minutes=30)
+                next_upd = n_time.strftime("%H:%M")
+            except: pass
+
         c1, c2, c3 = st.columns(3)
         c1.metric("最終更新", last_upd_row[0].split(' ')[1] if last_upd_row else "-")
-        c2.metric("登録状況", f"{current_count}/{max_urls_user}")
-        c3.metric("残り枠", max_urls_user - current_count)
+        c2.metric("次回更新予定", next_upd)
+        c3.metric("登録状況", f"{current_count}/{max_urls_user}")
 
         with st.sidebar:
             st.header("🔗 一括URL追加")
-            # 💡 text_areaに変更して複数入力可能に
             multi_urls = st.text_area("URLを改行して入力", placeholder="https://x.com/...\nhttps://x.com/...", height=150)
             if st.button("一括追加", type="primary"):
-                # 改行や空白を除去してリスト化
                 url_list = [u.strip().split('?')[0] for u in multi_urls.split('\n') if "status" in u]
                 if url_list:
                     conn = sqlite3.connect(DB_NAME)
                     added_count = 0
                     for clean_url in url_list:
-                        # ループ内でも件数チェック
                         temp_count = conn.execute("SELECT COUNT(*) FROM watch_urls WHERE user_owner=?", (user,)).fetchone()[0]
                         if temp_count < max_urls_user:
                             conn.execute("INSERT OR IGNORE INTO watch_urls VALUES (?,?)", (clean_url, user))
