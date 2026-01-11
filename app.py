@@ -280,7 +280,7 @@ else:
                         st.markdown(f"**{row['username']}** | {row['updated_at']} ({row['経過']})")
                     st.caption(row['content'])
                     m1, m2, m3, m4, m5 = st.columns(5)
-                    m1.metric("インプレッショ👁️", row['views'])
+                    m1.metric("👁️", row['views'])
                     m2.metric("❤️", row['likes'])
                     m3.metric("🔖", row['bookmarks'])
                     m4.metric("🔁", row['reposts'])
@@ -296,5 +296,6 @@ else:
                         conn.execute("DELETE FROM tweets WHERE tweet_id = ? AND user_owner = ?", (tid, user))
                     conn.commit(); conn.close()
                     st.rerun()
+
 
 
