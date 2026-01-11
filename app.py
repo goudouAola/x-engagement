@@ -8,7 +8,7 @@ from datetime import datetime, timezone, timedelta
 from selenium import webdriver
 from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.firefox.service import Service
-from webdriver_manager.firefox import GeckoDriverManager
+# from webdriver_manager.firefox import GeckoDriverManager  # 👈 不要なのでコメントアウト
 from selenium.webdriver.common.by import By
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -89,8 +89,11 @@ def scrape_all_with_multi_accounts(user_owner, progress_bar=None, status_text=No
     if not urls: return
     opts = Options()
     opts.add_argument("--headless")
+    opts.add_argument("--no-sandbox")
+    opts.add_argument("--disable-dev-shm-usage")
     try:
-        service = Service(GeckoDriverManager().install())
+        # 💡 ここを修正：サーバー内にある既存のバイナリを直接使用する
+        service = Service(executable_path="/usr/bin/geckodriver")
         driver = webdriver.Firefox(service=service, options=opts)
         for i, url in enumerate(urls[:15]):
             if status_text: status_text.text(f"更新中... ({i+1}/{len(urls[:15])})")
@@ -243,12 +246,11 @@ else:
                 links_html += '</div>'
                 st.markdown(links_html, unsafe_allow_html=True)
             with col_main:
-                # 💡 "content" カラムの見出しを "ツイート文" に変更
                 cols = ["選択", "No", "tweet_id", "content", "経過", "views", "likes", "bookmarks", "reposts", "replies"]
                 edit_df = st.data_editor(df[cols], column_config={
                         "選択": st.column_config.CheckboxColumn("", width="small"),
-                        "content": "ツイート内容",
-                        "views": "インプ", "likes": "いいね", "bookmarks": "ブクマ", "reposts": "リポスト", "replies": "リプ"
+                        "content": "ツイート文",
+                        "views": "インプ", "likes": "いい", "bookmarks": "ブク", "reposts": "リポ", "replies": "リプ"
                     }, hide_index=True, width='stretch')
             if st.button("🗑️ 選択削除"):
                 sel = edit_df[edit_df["選択"]]
@@ -259,4 +261,3 @@ else:
                         conn.execute("DELETE FROM watch_urls WHERE url LIKE ? AND user_owner = ?", (f"%{tid}%", user))
                         conn.execute("DELETE FROM tweets WHERE tweet_id = ? AND user_owner = ?", (tid, user))
                     conn.commit(); conn.close(); st.rerun()
-
