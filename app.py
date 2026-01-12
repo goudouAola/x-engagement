@@ -217,11 +217,15 @@ else:
         conn.close()
         
         next_upd = "-"
-        if last_upd_row:
+        if last_upd_row and last_upd_row[0]:
             try:
-                l_time = datetime.strptime(f"{datetime.now().year}/{last_upd_row[0]}", "%Y/%m/%d %H:%M")
+                # DBから取得した "2025/12/05 10:00" 形式をパース
+                l_time = datetime.strptime(last_upd_row[0], "%Y/%m/%d %H:%M")
                 next_upd = (l_time + timedelta(minutes=30)).strftime("%H:%M")
-            except: pass
+            except Exception as e:
+                # 形式が合わない場合のデバッグ用（通常は通りません）
+                next_upd = "計算エラー"
+        # ----------------------------------
 
         c1, c2, c3 = st.columns(3)
         c1.metric("最終更新", last_upd_row[0].split(' ')[1] if last_upd_row else "-")
@@ -296,6 +300,7 @@ else:
                         conn.execute("DELETE FROM tweets WHERE tweet_id = ? AND user_owner = ?", (tid, user))
                     conn.commit(); conn.close()
                     st.rerun()
+
 
 
 
