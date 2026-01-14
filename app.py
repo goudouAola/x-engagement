@@ -110,15 +110,12 @@ def scrape_all_with_multi_accounts(user_owner, progress_bar=None, status_text=No
         target_urls = urls[:max_urls_val]
         total = len(target_urls)
         for i, url in enumerate(target_urls):
-            # 💡 進捗表示の更新
             if status_text: status_text.text(f"処理中... ({i+1}/{total}件目)")
             if progress_bar: progress_bar.progress((i + 1) / total)
-            
             scrape_single_tweet(url, driver, user_owner)
             time.sleep(5)
         if status_text: status_text.text("更新完了！")
-    except Exception as e:
-        if status_text: status_text.text(f"エラー: {str(e)}")
+    except: pass
     finally:
         try: driver.quit()
         except: pass
@@ -148,65 +145,46 @@ if 'auth_user' not in st.session_state:
 if st.session_state['auth_user'] is None:
     t1, t2 = st.tabs(["🔒 ログイン", "📝 新規登録申請"])
     with t1:
-        u = st.text_input("ユーザー名")
-        p = st.text_input("パスワード", type="password")
+        u = st.text_input("ユーザー名"); p = st.text_input("パスワード", type="password")
         if st.button("ログイン"):
-            conn = sqlite3.connect(DB_NAME)
-            res = conn.execute("SELECT password, is_approved FROM users WHERE username=?", (u,)).fetchone()
-            conn.close()
+            conn = sqlite3.connect(DB_NAME); res = conn.execute("SELECT password, is_approved FROM users WHERE username=?", (u,)).fetchone(); conn.close()
             if res and p == res[0]:
-                if int(res[1]) == 1:
-                    st.session_state['auth_user'] = u
-                    st.rerun()
+                if int(res[1]) == 1: st.session_state['auth_user'] = u; st.rerun()
                 else: st.error("承認待ち")
             else: st.error("不一致")
     with t2:
-        reg_u = st.text_input("希望ID")
-        reg_p = st.text_input("希望PASS", type="password")
+        reg_u = st.text_input("希望ID"); reg_p = st.text_input("希望PASS", type="password")
         if st.button("申請"):
             if reg_u and reg_p:
                 conn = sqlite3.connect(DB_NAME)
                 try:
                     conn.execute("INSERT INTO users (username, password, is_approved, max_urls) VALUES (?, ?, 0, 15)", (reg_u, reg_p))
-                    conn.commit()
-                    st.success("完了")
+                    conn.commit(); st.success("完了")
                 except: st.error("不可")
                 conn.close()
 else:
     user = st.session_state['auth_user']
-    if st.sidebar.button("ログアウト"):
-        st.session_state['auth_user'] = None
-        st.rerun()
+    if st.sidebar.button("ログアウト"): st.session_state['auth_user'] = None; st.rerun()
 
     if user == MASTER_KEY:
         st.title("👑 管理者メニュー")
         with st.expander("⚠️ DB操作"):
             if st.button("💣 データベース完全初期化"):
                 if os.path.exists(DB_NAME): os.remove(DB_NAME)
-                st.session_state['auth_user'] = None
-                st.rerun()
-        conn = sqlite3.connect(DB_NAME)
-        unapproved = pd.read_sql_query("SELECT username FROM users WHERE is_approved=0", conn)
-        conn.close()
+                st.session_state['auth_user'] = None; st.rerun()
+        conn = sqlite3.connect(DB_NAME); unapproved = pd.read_sql_query("SELECT username FROM users WHERE is_approved=0", conn); conn.close()
         if not unapproved.empty:
             for target in unapproved["username"]:
                 if st.button(f"承認: {target}"):
-                    conn = sqlite3.connect(DB_NAME)
-                    conn.execute("UPDATE users SET is_approved=1 WHERE username=?", (target,))
-                    conn.commit(); conn.close(); st.rerun()
+                    conn = sqlite3.connect(DB_NAME); conn.execute("UPDATE users SET is_approved=1 WHERE username=?", (target,)); conn.commit(); conn.close(); st.rerun()
         st.subheader("ユーザー管理")
-        conn = sqlite3.connect(DB_NAME)
-        all_users = pd.read_sql_query("SELECT * FROM users", conn)
-        all_users["削除"] = False
-        conn.close()
+        conn = sqlite3.connect(DB_NAME); all_users = pd.read_sql_query("SELECT * FROM users", conn); all_users["削除"] = False; conn.close()
         edited = st.data_editor(all_users, hide_index=True, width='stretch', column_config={"削除": st.column_config.CheckboxColumn("削除")})
         if st.button("💾 ユーザー情報保存"):
             conn = sqlite3.connect(DB_NAME)
             for _, r in edited.iterrows():
-                if r["削除"]:
-                    conn.execute("DELETE FROM users WHERE username=?", (r["username"],))
-                else:
-                    conn.execute("UPDATE users SET password=?, is_approved=?, max_urls=? WHERE username=?", (r["password"], int(r["is_approved"]), int(r["max_urls"]), r["username"]))
+                if r["削除"]: conn.execute("DELETE FROM users WHERE username=?", (r["username"],))
+                else: conn.execute("UPDATE users SET password=?, is_approved=?, max_urls=? WHERE username=?", (r["password"], int(r["is_approved"]), int(r["max_urls"]), r["username"]))
             conn.commit(); conn.close(); st.rerun()
     else:
         st.title(f"📊 {user}")
@@ -216,59 +194,46 @@ else:
         max_urls_user = conn.execute("SELECT max_urls FROM users WHERE username=?", (user,)).fetchone()[0]
         conn.close()
         
+        # 💡 クラッシュを絶対に防ぐ日時計算
         next_upd = "-"
+        last_upd_str = "-"
         if last_upd_row and last_upd_row[0]:
+            last_upd_str = last_upd_row[0].split(' ')[1] if ' ' in last_upd_row[0] else last_upd_row[0]
             try:
-                # DBから取得した "2025/12/05 10:00" 形式をパース
-                l_time = datetime.strptime(last_upd_row[0], "%Y/%m/%d %H:%M")
+                # 複数の日付形式に対応できるよう try-except を二重化
+                try:
+                    l_time = datetime.strptime(last_upd_row[0], "%Y/%m/%d %H:%M")
+                except:
+                    l_time = datetime.strptime(f"{datetime.now().year}/{last_upd_row[0]}", "%Y/%m/%d %H:%M")
                 next_upd = (l_time + timedelta(minutes=30)).strftime("%H:%M")
-            except Exception as e:
-                # 形式が合わない場合のデバッグ用（通常は通りません）
-                next_upd = "計算エラー"
-        # ----------------------------------
+            except:
+                pass
 
         c1, c2, c3 = st.columns(3)
-        c1.metric("最終更新", last_upd_row[0].split(' ')[1] if last_upd_row else "-")
+        c1.metric("最終更新", last_upd_str)
         c2.metric("次回予定", next_upd)
         c3.metric("状況", f"{current_count}/{max_urls_user}")
 
         with st.sidebar:
             st.header("🔗 一括URL追加")
             multi_urls = st.text_area("改行区切りで入力", height=150)
-            
-            # 💡 サイドバーに進捗エリアを確保
-            pg_area = st.empty()
-            st_area = st.empty()
-            
+            pg_area = st.empty(); st_area = st.empty()
             if st.button("一括追加", type="primary"):
                 url_list = [u.strip().split('?')[0] for u in multi_urls.split('\n') if "status" in u]
                 if url_list:
                     conn = sqlite3.connect(DB_NAME)
                     for clean_url in url_list:
                         temp_count = conn.execute("SELECT COUNT(*) FROM watch_urls WHERE user_owner=?", (user,)).fetchone()[0]
-                        if temp_count < max_urls_user:
-                            conn.execute("INSERT OR IGNORE INTO watch_urls VALUES (?,?)", (clean_url, user))
+                        if temp_count < max_urls_user: conn.execute("INSERT OR IGNORE INTO watch_urls VALUES (?,?)", (clean_url, user))
                     conn.commit(); conn.close()
-                    # 💡 進捗表示付きでスクレイピング実行
-                    pb = pg_area.progress(0)
-                    scrape_all_with_multi_accounts(user, pb, st_area)
-                    st.rerun()
+                    pb = pg_area.progress(0); scrape_all_with_multi_accounts(user, pb, st_area); st.rerun()
             if st.button("🚀 手動更新"):
-                pb = pg_area.progress(0)
-                scrape_all_with_multi_accounts(user, pb, st_area)
-                st.rerun()
+                pb = pg_area.progress(0); scrape_all_with_multi_accounts(user, pb, st_area); st.rerun()
             if st.button("🗑️ 履歴全削除"):
-                conn = sqlite3.connect(DB_NAME)
-                conn.execute("DELETE FROM watch_urls WHERE user_owner=?", (user,))
-                conn.execute("DELETE FROM tweets WHERE user_owner=?", (user,))
-                conn.commit(); conn.close(); st.rerun()
+                conn = sqlite3.connect(DB_NAME); conn.execute("DELETE FROM watch_urls WHERE user_owner=?", (user,)); conn.execute("DELETE FROM tweets WHERE user_owner=?", (user,)); conn.commit(); conn.close(); st.rerun()
 
         conn = sqlite3.connect(DB_NAME)
-        df = pd.read_sql_query("""
-            SELECT t.* FROM tweets t 
-            INNER JOIN watch_urls w ON t.tweet_id = SUBSTR(w.url, INSTR(w.url, '/status/') + 8)
-            WHERE t.user_owner=? AND w.user_owner=? ORDER BY t.updated_at DESC
-        """, conn, params=(user, user))
+        df = pd.read_sql_query("SELECT * FROM tweets WHERE user_owner=? ORDER BY updated_at DESC", conn, params=(user,))
         conn.close()
         
         if not df.empty:
@@ -278,29 +243,16 @@ else:
             for i, row in df.iterrows():
                 with st.container(border=True):
                     col_btn, col_info = st.columns([1, 2])
-                    with col_btn:
-                        st.link_button("🔗 リンクを開く", f"https://twitter.com/i/web/status/{row['tweet_id']}", width='stretch')
-                    with col_info:
-                        st.markdown(f"**{row['username']}** | {row['updated_at']} ({row['経過']})")
+                    with col_btn: st.link_button("🔗 開く", f"https://twitter.com/i/web/status/{row['tweet_id']}", width='stretch')
+                    with col_info: st.markdown(f"**{row['username']}** | {row['updated_at']} ({row['経過']})")
                     st.caption(row['content'])
                     m1, m2, m3, m4, m5 = st.columns(5)
-                    m1.metric("👁️", row['views'])
-                    m2.metric("❤️", row['likes'])
-                    m3.metric("🔖", row['bookmarks'])
-                    m4.metric("🔁", row['reposts'])
-                    m5.metric("💬", row['replies'])
-                    if st.checkbox("削除選択", key=f"chk_{row['tweet_id']}"):
-                        selected_ids.append(row['tweet_id'])
-
+                    m1.metric("👁️", row['views']); m2.metric("❤️", row['likes']); m3.metric("🔖", row['bookmarks']); m4.metric("🔁", row['reposts']); m5.metric("💬", row['replies'])
+                    if st.checkbox("削除選択", key=f"chk_{row['tweet_id']}"): selected_ids.append(row['tweet_id'])
             if selected_ids:
                 if st.button(f"🗑️ 選択した {len(selected_ids)} 件を削除"):
                     conn = sqlite3.connect(DB_NAME)
                     for tid in selected_ids:
                         conn.execute("DELETE FROM watch_urls WHERE url LIKE ? AND user_owner = ?", (f"%{tid}%", user))
                         conn.execute("DELETE FROM tweets WHERE tweet_id = ? AND user_owner = ?", (tid, user))
-                    conn.commit(); conn.close()
-                    st.rerun()
-
-
-
-
+                    conn.commit(); conn.close(); st.rerun()
